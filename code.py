@@ -9,7 +9,6 @@ import numpy as np
 import gradio as gr
 from huggingface_hub import InferenceClient
 
-# --- MODEL DEFINITIONS
 class Hswish(nn.Module):
     def forward(self, x): return x * F.relu6(x + 3, inplace=True) / 6
 
@@ -58,7 +57,6 @@ class SolarEfficientNet(nn.Module):
         x = self.dropout(x)
         return self.fc(x)
 
-# --- MISSING GRAD-CAM CLASS
 class GradCAM:
     def __init__(self, model, target_layer):
         self.model = model
@@ -84,19 +82,16 @@ class GradCAM:
         cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
         return cam, pred_idx.item()
 
-# --- INITIALIZATION ---
 class_names = ['Bird_drop', 'Clean', 'Dusty', 'Electrical_damage', 'Physical_damage', 'Snow_covered']
 device = torch.device("cpu") # Free tier uses CPU
 model = SolarEfficientNet(len(class_names))
 model.load_state_dict(torch.load('best_solar_effnet.pth', map_location=device))
 model.eval()
 
-# Secure Token Handling
 hf_token = os.getenv("HF_TOKEN")
 client = InferenceClient(api_key=hf_token)
 latest_diagnostic_data = {}
 
-# --- VISION LOGIC ---
 data_transforms = transforms.Compose([
     transforms.ToPILImage(),
     transforms.Resize((256, 256)),
@@ -114,15 +109,11 @@ def calculate_power_loss(cls_name, heatmap, confidence):
         'Electrical_damage': 0.95, 'Physical_damage': 0.60, 'Snow_covered': 0.90
     }
 
-    # Extract spatial information from Grad-CAM
     threshold = 0.5
     area_ratio = np.sum(heatmap > threshold) / heatmap.size
-
-    # Base Calculation: Spatial Ratio * Physical Severity * Model Certainty
     alpha = SEVERITY_COEFFICIENTS.get(cls_name, 0.10)
     inferred_loss = (area_ratio * alpha) * confidence * 100
 
-    # Logarithmic scaling for hotspot detection (small area, high impact)
     if area_ratio > 0:
         inferred_loss = max(inferred_loss, (np.log1p(area_ratio) * alpha * 100))
 
@@ -141,29 +132,19 @@ def full_research_diagnostic_pipeline(image):
         if image is None:
             return None, "Error: No image provided."
 
-        # 1. Vision Preprocessing
-        # Ensure image is in RGB for the model
         input_tensor = data_transforms(image).unsqueeze(0).to(device)
         
-        # 2. Generate Heatmap & Class Prediction
-        # Uses the features layer for spatial localization
         cam_extractor = GradCAM(model, model.features[-1])
         heatmap, pred_idx = cam_extractor.generate_heatmap(input_tensor)
         cls_name = class_names[pred_idx]
-        
-        # 3. CALCULATE STATISTICAL CONFIDENCE
-        # We need this 'conf' value for the loss function and the paper metrics
+    
         with torch.no_grad():
             output = model(input_tensor)
             probabilities = F.softmax(output, dim=1)
             conf = torch.max(probabilities).item() 
         
-        # 4. CALCULATE POWER LOSS
-        # This uses the literature-based coefficients and spatial area
         loss_val = calculate_power_loss(cls_name, heatmap, conf)
         
-        # 5. UPDATE CHATBOT CONTEXT
-        # Stores data for the RAG-lite hf_chat_fn to access
         latest_diagnostic_data = {
             "defect": cls_name, 
             "loss": loss_val, 
@@ -171,19 +152,14 @@ def full_research_diagnostic_pipeline(image):
             "timestamp": "2026-02-17"
         }
 
-        # 6. IMAGE POST-PROCESSING (For Gradio Display)
-        # Resize original image and heatmap to match (256x256)
         img_cv = cv2.resize(image, (256, 256))
         heatmap_rescaled = cv2.resize(heatmap, (256, 256))
         
-        # Colorize the heatmap (JET represents 'heat' or 'attention')
         heatmap_colored = cv2.applyColorMap(np.uint8(255 * heatmap_rescaled), cv2.COLORMAP_JET)
         
-        # Overlay heatmap on original image (60% image, 40% heatmap)
         display_img = cv2.addWeighted(img_cv, 0.6, heatmap_colored, 0.4, 0)
         final_output = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
         
-        # 7. GENERATE SCIENTIFIC REPORT
         report = (
             f"DIAGNOSIS: {cls_name}\n"
             f"ESTIMATED POWER LOSS: {loss_val}%\n"
@@ -196,16 +172,12 @@ def full_research_diagnostic_pipeline(image):
     except Exception as e: 
         return None, f"Pipeline Error: {str(e)}"
 
-# --- CHATBOT ---
-# --- UPGRADED CHATBOT (RAG-lite + Prompt Engineering) ---
 def hf_chat_fn(message, history):
-    # Retrieve the latest data from the Vision Pipeline
+    
     defect = latest_diagnostic_data.get('defect', 'None')
     loss = latest_diagnostic_data.get('loss', 0)
     conf = latest_diagnostic_data.get('conf', 0)
 
-    # 1. Internal Knowledge Base (Simulating RAG retrieval)
-    # This provides the LLM with specific "retrieved" facts from engineering manuals
     kb_protocols = {
         "Electrical_damage": "Critical: High risk of DC arcing. Check inverter logs and string voltage immediately.",
         "Bird_drop": "Maintenance: Hotspots may develop. Clean with deionized water when panels are cool.",
@@ -217,7 +189,6 @@ def hf_chat_fn(message, history):
     
     protocol = kb_protocols.get(defect, "General inspection required.")
 
-    # 2. Advanced Prompt Engineering (Persona + Chain-of-Thought)
     system_message = f"""
     You are a Senior Solar O&M (Operations & Maintenance) Engineer.
     
@@ -236,13 +207,11 @@ def hf_chat_fn(message, history):
 
     messages = [{"role": "system", "content": system_message}]
     for msg in history:
-        # Handling Gradio's history format (list of dicts)
         messages.append({"role": msg['role'], "content": msg['content']})
     
     messages.append({"role": "user", "content": message})
     
     response = ""
-    # streaming response from Llama-3.2
     for chunk in client.chat_completion(
         model="meta-llama/Llama-3.2-3B-Instruct", 
         messages=messages, 
@@ -253,8 +222,7 @@ def hf_chat_fn(message, history):
             response += chunk.choices[0].delta.content
     return response
 
-# --- GRADIO INTERFACE ---
-with gr.Blocks() as demo:  # Removed 'theme' from here
+with gr.Blocks() as demo:
     gr.Markdown("# MTE-SolarNet Inspector")
     with gr.Row():
         with gr.Column():
@@ -264,10 +232,8 @@ with gr.Blocks() as demo:  # Removed 'theme' from here
             output_heatmap = gr.Image(label="Localization")
             report_box = gr.Textbox(label="Report")
     
-    # Removed 'type="messages"' as it's now standard
     gr.ChatInterface(fn=hf_chat_fn, title="Solar Panel Assistant")
     
     btn.click(fn=full_research_diagnostic_pipeline, inputs=input_image, outputs=[output_heatmap, report_box])
 
-# Pass the theme to the launch method
 demo.launch(theme=gr.themes.Soft())
