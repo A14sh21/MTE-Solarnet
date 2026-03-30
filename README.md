@@ -48,3 +48,7 @@ The end-to-end inference process operates seamlessly when a user interacts with 
 4. Contextual Generation: The LLM receives a strict prompt containing the vision model's prediction, the confidence score, and the retrieved documents from the RAG system. The LLM synthesizes this information into a clear, professional diagnostic report detailing the nature of the defect, potential causes, and recommended mitigation steps.
 
 5. Output: The Gradio interface updates to display the results to the user, providing both the technical classification and the comprehensive, easy-to-read LLM-generated maintenance report.
+
+
+#### Note: Path for weight embeddings not included here
+
